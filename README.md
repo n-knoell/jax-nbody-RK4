@@ -1,2 +1,2 @@
 # jax-nbody-RK4
-Runke Kutta 4 integrator for n-body gravity simulations written in jax.
+Runke Kutta 4 integrator for n-body gravity simulations written with jax in Python.
