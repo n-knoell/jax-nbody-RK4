@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from jax import jit, lax
 import time
 
-# sampler
+# sampler (plummer and virialized sphere)
 from _nbody_sampler import plummer_sampler, virialized_sphere_sampler
 
 def acceleration(positions: jnp.ndarray, masses: jnp.ndarray, eps: float = 1e-12):
@@ -42,9 +42,9 @@ def rk4_step_nbody(state: jnp.ndarray, h: float, masses: jnp.ndarray):
         # s shape (n,7)
         n = s.shape[0]
         dt_col = jnp.ones((n, 1), dtype=s.dtype)  # time derivative (1 per body)
-        positions = s[:, 1:4]  # (n,3)
-        velocities = s[:, 4:7]  # (n,3)
-        acc = acceleration(positions, masses)  # (n,3)
+        positions = s[:, 1:4]  
+        velocities = s[:, 4:7] 
+        acc = acceleration(positions, masses) 
         return jnp.concatenate([dt_col, velocities, acc], axis=1)  # (n,7)
 
     k1 = deriv(state)
@@ -62,7 +62,7 @@ def integrate_nbody(orbits: jnp.ndarray,
                     COM_frame: bool,
                     eps: float = 1e-12):
     """
-    orbits: jnp.array shape (n,7) initial rows [t, x, y, z, vx, vy, vz]
+    orbits: jnp.array shape (n,7): [t, x, y, z, vx, vy, vz]
     masses: jnp.array shape (n,)
     h: timestep
     T: total integration time
@@ -76,7 +76,7 @@ def integrate_nbody(orbits: jnp.ndarray,
     @jit
     def run_with_fori_loop(state0):
         def body_fn(i, carry):
-            state, traj = carry  # state (n,7), traj (num_steps, n, 7)
+            state, traj = carry 
             new_state = rk4_step_nbody(state, h, masses)
             traj = traj.at[i].set(new_state)
             return new_state, traj
@@ -85,17 +85,13 @@ def integrate_nbody(orbits: jnp.ndarray,
         _, traj = lax.fori_loop(0, num_steps, body_fn, (state0, traj))
         return traj
 
-    t0 = time.perf_counter()
     traj = run_with_fori_loop(state0)
-    t1 = time.perf_counter()
-    print(f"n-body RK4 took {t1 - t0:.4f} seconds")
-
-    # Transform trajectories into center-of-mass frame (positions only; times/vels adjusted)
+    # Transform trajectories into center-of-mass frame
     positions = traj[:, :, 1:4]  
     weighted = positions * masses[None, :, None]  
     COM = jnp.sum(weighted, axis=1) / totalM  #
     # Subtract COM from each body's positions for all timesteps
-    positions_com = positions - COM[:, None, :]  # (num_steps, n, 3)
+    positions_com = positions - COM[:, None, :] 
     traj_com = traj.at[:, :, 1:4].set(positions_com)
 
     if COM_frame == True:
@@ -148,10 +144,10 @@ def plot_3d_trajectories(traj,
 
     def _plot_on_axis(ax, data, subtitle):
         for i in range(n):
-            xs = data[:, i, 1]  # x
-            ys = data[:, i, 2]  # y
-            zs = data[:, i, 3]  # z
-            ax.plot(xs, ys, zs, linewidth=1)  #, label=f'body {i}')
+            xs = data[:, i, 1]  
+            ys = data[:, i, 2]  
+            zs = data[:, i, 3]  
+            ax.plot(xs, ys, zs, linewidth=1)  
             if show_initial:
                 ax.scatter(xs[0], ys[0], zs[0], s=40)  # initial point
         ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
@@ -193,9 +189,6 @@ if __name__ == "__main__":
     orbit5 = jnp.array([0.0,  0.000000000000000,  2.500000000000000,  2.097749077943200,  0.039063544778898,  0.000000000000000,  0.000000000000000])   
     masses = jnp.array([1, 0.95, 0.98, 1.02, 1.03])*mass_source
 
-    # masses = jnp.array([1, 0.0001, 0.0003, 0.0008, 0.0002])  # (2,)
-    # M=masses[0]
-
     #### circular orbits in one plane (xy)
     r1=3.8
     r2=1
@@ -216,15 +209,18 @@ if __name__ == "__main__":
     low_mass = 0.1*mass_source
     high_mass =10*low_mass
     # orbits, masses = virialized_sphere_sampler(N, low_mass, high_mass, a=box_size/2, seed=0)
-    # orbits, masses = plummer_sampler(N, key=jax.random.PRNGKey(1234), M1=0.5*mass_source, M2=2.0*mass_source, mass_dist="powerlaw", a=1.0)
     orbits, masses = plummer_sampler(N,key=jax.random.PRNGKey(1), M1=low_mass, M2=high_mass, a=box_size/2)
     COM_frame=True
+    
+    t0 = time.perf_counter()
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
+    t1 = time.perf_counter()
+    print("Time: ", t1 - t0)
+    
     plotname = "nbody_plummer"+str(N)
     from matplotlib import pyplot as plt
     def plot2d(masses, traj_com):
         for i in range(len(masses)):
-            # print(i)
             plt.plot(traj_com[:, i, 1], traj_com[:, i, 2], markersize=.1, linewidth=1)
         plt.axis('equal')
         plt.xlim(-box_size,box_size)
@@ -243,4 +239,5 @@ if __name__ == "__main__":
     elif plot == "both":
         plot2d(masses, traj_com)  
         plot_3d_trajectories(traj_com, plotname, box_size, elev=35, azim=45)
+
 
