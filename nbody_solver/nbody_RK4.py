@@ -3,9 +3,13 @@ import jax
 import jax.numpy as jnp
 from jax import jit, lax
 import time
+import numpy as np
+from matplotlib import pyplot as plt
 
 # sampler (plummer and virialized sphere)
 from _nbody_sampler import plummer_sampler, virialized_sphere_sampler
+
+jax.config.update('jax_enable_x64', True)
 
 def acceleration(positions: jnp.ndarray, masses: jnp.ndarray, eps: float = 1e-12):
     """
@@ -60,7 +64,7 @@ def integrate_nbody(orbits: jnp.ndarray,
                     h: float,
                     T: float,
                     COM_frame: bool,
-                    eps: float = 1e-12):
+                    ):
     """
     orbits: jnp.array shape (n,7): [t, x, y, z, vx, vy, vz]
     masses: jnp.array shape (n,)
@@ -159,7 +163,7 @@ def plot_3d_trajectories(traj,
 
   
     ax = fig.add_subplot(111, projection='3d')
-    _plot_on_axis(ax, traj, "n-body trajectories (n="+str(N)+")")
+    _plot_on_axis(ax, traj, "n-body trajectories (n="+str(n)+")")
     size = box_size
     ax.set_xlim3d([-size, size])
     ax.set_ylim3d([-size, size])
@@ -167,58 +171,66 @@ def plot_3d_trajectories(traj,
     plt.savefig(plotname+"_3d.png", dpi=300)
     
 def orbital_circ_velocity(mass, radius):
+    """Compute circular orbital velocity for given mass and radius."""
     v = jnp.sqrt(mass/radius)
     return v
 
+def time_to_integrate(orbits, masses, h, T, COM_frame):
+    """compute time to integrate n-body system"""
+    t0 = time.perf_counter()
+    traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
+    t1 = time.perf_counter()
+    return t1 - t0
+
 if __name__ == "__main__":
-    jax.config.update('jax_enable_x64', True)
-    from mpl_toolkits.mplot3d import Axes3D
-    import numpy as np
-
-    # orbit1 = jnp.array([0.0, 0.3, 0.0, 0.0, 0.0, 0.6, 0.0])
-    # orbit2 = jnp.array([0.0, -0.7, 0.0, 0.0, 0.0,-0.5, 0.0])
-    # orbit3 = jnp.array([0.0, 0, 0, -2, 0.5**0.5,-0.0, 0.0])
-    # orbit4 = jnp.array([0.0, 0, 2.8, 0.0, (1/2.8)**0.5,-0.0, 0.0])
-    # orbit5 = jnp.array([0.0, 0, 0, 1, 0.0,-1, 0.0])
-    # masses = jnp.array([0.5, 0.5, 0.001, 0.0003, 0.0002])  # (2,)
-    mass_source = 1e-3
-    orbit1 = jnp.array([0.0,  0.991448574176414,  0.029880705565651,  0.010875687404770,  0.084207016573161,  0.022741169835371,  0.000000000000000])
-    orbit2 = jnp.array([0.0,  0.991448574176414, -0.031453374279633, -0.011448092005020, -0.088638964813854,  0.022741169835371,  0.000000000000000])
-    orbit3 = jnp.array([0.0, -0.949478527562011,  0.000000000000000,  0.024541055790300,  0.077085096380257, -0.022172640589486, -0.053975565569078])
-    orbit4 = jnp.array([0.0, -0.983172316307095,  0.000000000000000, -0.023578661445583, -0.074062151424169, -0.022172640589486,  0.051858876723232])   
-    orbit5 = jnp.array([0.0,  0.000000000000000,  2.500000000000000,  2.097749077943200,  0.039063544778898,  0.000000000000000,  0.000000000000000])   
-    masses = jnp.array([1, 0.95, 0.98, 1.02, 1.03])*mass_source
-
     #### circular orbits in one plane (xy)
-    r1=3.8
-    r2=1
-    r3=1.9
-    r4 =2.7
+    # M = 1.0
+    # r1=3.8
+    # r2=1
+    # r3=1.9
+    # r4 =2.7
     # orbit1 = jnp.array([0.0, 0., 0.0, 0.0, 0.0, 0., 0.0])
     # orbit2 = jnp.array([0.0, r1, 0.0, 0.0, 0.0,orbital_circ_velocity(M,r1), 0.0])
     # orbit3 = jnp.array([0.0, 0, r2, 0, orbital_circ_velocity(M,r2) ,-0.0, 0.0])
     # orbit4 = jnp.array([0.0, 0, -r3, 0.0, -orbital_circ_velocity(M,r3),-0.0, 0.0])
     # orbit5 = jnp.array([0.0, -r4, 0, 0, 0.0,-orbital_circ_velocity(M,r4), 0.0])
+    # orbits = jnp.stack([orbit1, orbit2, orbit3, orbit4, orbit5]) 
+    # masses = jnp.array([1, 0.95, 0.98, 1.02, 1.03])*M
 
-    orbits = jnp.stack([orbit1, orbit2, orbit3, orbit4, orbit5])  
+    ### binary system time test
+    # orbit1 = np.array([0.0,  0.5, 0.0, 0.0, 0.0, 0.5, 0.0])
+    # orbit2 = np.array([0.0, -0.5, 0.0, 0.0, 0.0,-0.5, 0.0])
+    # orbits = jnp.stack([orbit1, orbit2])
+    # M1 = M2 = 0.5
+    # h = 0.001
+    # masses = jnp.array([M1, M2])
+    # T = 500
+
+    # Tmax=500
+    # T_array = np.arange(1, Tmax, 50)
+    # time_taken_list = []
+    # for i in T_array:
+    #     time_taken = time_to_integrate(orbits, masses, h, i, COM_frame=True)
+    #     time_taken_list.append(time_taken)
+    #     print(i, time_taken)
+
+    # np.savez_compressed('JAX_integration_times_binary.npz', T_array=T_array, time_taken_list=time_taken_list)
+    
     h = 0.001
     T = 500
 
     N=20
     box_size=4.0
+    mass_source = 1e-3
     low_mass = 0.1*mass_source
     high_mass =10*low_mass
     # orbits, masses = virialized_sphere_sampler(N, low_mass, high_mass, a=box_size/2, seed=0)
     orbits, masses = plummer_sampler(N,key=jax.random.PRNGKey(1), M1=low_mass, M2=high_mass, a=box_size/2)
-    COM_frame=True
+    COM_frame = True
     
-    t0 = time.perf_counter()
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
-    t1 = time.perf_counter()
-    print("Time: ", t1 - t0)
     
-    plotname = "nbody_plummer"+str(N)
-    from matplotlib import pyplot as plt
+    plotname = "plummer"+str(N)
     def plot2d(masses, traj_com):
         for i in range(len(masses)):
             plt.plot(traj_com[:, i, 1], traj_com[:, i, 2], markersize=.1, linewidth=1)
@@ -239,5 +251,3 @@ if __name__ == "__main__":
     elif plot == "both":
         plot2d(masses, traj_com)  
         plot_3d_trajectories(traj_com, plotname, box_size, elev=35, azim=45)
-
-
