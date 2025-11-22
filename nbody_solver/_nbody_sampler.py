@@ -10,7 +10,7 @@ Returns:
     txv : jnp.array - [t, x, y, z, vx, vy, vz]
     masses : jnp.array - masses for each particle
 
-G defaults to 1.0.
+G: 1.0.
 The Plummer scale `b` defaults to a/2 so that most mass lies well
 within the box radius `a`. Change `b` if you want a more/less
 concentrated distribution.
@@ -18,18 +18,13 @@ concentrated distribution.
 Example:
     txv, m = plummer_sampler(n=100, M1=0.8, M2=1.2, a=1.0, seed=42)
 """
-
-
 import jax
 import jax.numpy as jnp
-from jax import jit
 from typing import Tuple, Any
-from functools import partial
-
 
 def _pairwise_distances(positions: jnp.ndarray, softening: float = 0.0) -> jnp.ndarray:
     """
-    positions: (n,3)
+    returns distances between two positions (n,3)
     """
     diff = positions[:, None, :] - positions[None, :, :] 
     r2 = jnp.sum(diff ** 2, axis=-1)
@@ -52,17 +47,14 @@ def _pack_orbits(pos: jnp.ndarray, vel: jnp.ndarray, t0: float = 0.0) -> jnp.nda
     tcol = jnp.full((n, 1), float(t0), dtype=pos.dtype)
     return jnp.hstack([tcol, pos, vel])
 
-# ------------------------------
 # Plummer sampler
-# ------------------------------
-# @partial(jit, static_argnums=("n", "mass_dist"))
 def plummer_sampler(n: int,
                     key: Any,             
                     M1: float = 1.0,
                     M2: float = 1.0,
                     mass_dist: str = "uniform",   # "uniform" or "powerlaw"
                     powerlaw_alpha: float = 2.35, # used only if mass_dist == "powerlaw"
-                    a: float = 1.0,   # Plummer scale radius
+                    a: float = 1.0,   # scale radius
                     t0: float = 0.0,
                     softening: float = 0.0
                    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -70,8 +62,7 @@ def plummer_sampler(n: int,
     Returns:
         orbits: [t0, x,y,z, vx,vy,vz]
         masses: shape (n,)
-    Notes:
-        - G = 1 units
+        - G = 1
         - velocities are scaled so that 2*T + U = 0 (global virial equilibrium)
     """
     k1, k2, k3, k4 = jax.random.split(key, 4)
@@ -92,7 +83,7 @@ def plummer_sampler(n: int,
     else:
         raise ValueError("mass_dist must be 'uniform' or 'powerlaw'")
 
-    # --- sample Plummer radii via inverse CDF ---
+    # sample Plummer radii via inverse CDF 
     u_r = jax.random.uniform(k2, (n,))  # in (0,1)
     # inverse CDF for Plummer cumulative mass: r = a * ( u^{-2/3} - 1 )^{-1/2}
     r = a * (u_r ** (-2.0 / 3.0) - 1.0) ** (-0.5)
@@ -110,7 +101,7 @@ def plummer_sampler(n: int,
     T0 = 0.5 * jnp.sum(masses[:, None] * (vel_raw ** 2))
 
     # compute potential energy
-    U = _potential_energy(pos, masses, softening=softening)  # negative
+    U = _potential_energy(pos, masses, softening=softening) 
 
     # desired kinetic energy to satisfy virial: 2T = -U -> T_desired = -U/2
     T_desired = -0.5 * U
@@ -131,11 +122,6 @@ def plummer_sampler(n: int,
     orbits = _pack_orbits(pos, vel, t0=t0)
     return orbits, masses
 
-# ------------------------------
-# Example usage
-# key = jax.random.PRNGKey(1234)
-# orbits, masses = plummer_sampler(n=128, key=key, M1=0.5, M2=2.0, mass_dist="uniform", a=1.0)
-# print(orbits.shape, masses.shape)
 
 """
 Simple virialized sphere sampler for N-body initial conditions (3D).
@@ -217,9 +203,9 @@ def virialized_sphere_sampler(
     if R is None:
         R = 0.9 * a
 
-    # --- sample positions uniformly in sphere of radius R
+    # sample positions uniformly in sphere of radius R
     u = rng.random(n)
-    r = R * u ** (1.0 / 3.0)  # invert CDF for uniform sphere
+    r = R * u ** (1.0 / 3.0)  # inverse CDF for uniform sphere
     cos_theta = rng.uniform(-1.0, 1.0, size=n)
     sin_theta = np.sqrt(1.0 - cos_theta ** 2)
     phi = rng.uniform(0.0, 2.0 * np.pi, size=n)
@@ -228,15 +214,13 @@ def virialized_sphere_sampler(
     y = r * sin_theta * np.sin(phi)
     z = r * cos_theta
 
-    # --- initial velocity magnitudes: Maxwell-like draw using sigma~sqrt(G*M_tot/R)
+    # initial velocity magnitudes: Maxwell-like draw using sigma~sqrt(G*M_tot/R)
     v_scale = np.sqrt(np.abs(G * M_tot / max(R, 1e-12)))
-    # draw three independent normals and take magnitude
     vx0 = rng.normal(scale=v_scale, size=n)
     vy0 = rng.normal(scale=v_scale, size=n)
     vz0 = rng.normal(scale=v_scale, size=n)
 
-    # now we will rescale speeds to reach target virial ratio
-    # compute potential energy U
+    # now we will rescale speeds to reach target virial ratio, compute potential energy U
     coords = np.vstack([x, y, z]).T  # (n,3)
     dx = coords[:, None, 0] - coords[None, :, 0]
     dy = coords[:, None, 1] - coords[None, :, 1]
