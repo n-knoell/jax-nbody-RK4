@@ -169,6 +169,18 @@ def plot_3d_trajectories(traj,
     ax.set_ylim3d([-size, size])
     ax.set_zlim3d([-size, size])
     plt.savefig(plotname+"_3d.png", dpi=300)
+
+def plot2d(masses, traj_com, plotname):
+    for i in range(len(masses)):
+        plt.plot(traj_com[:, i, 1], traj_com[:, i, 2], markersize=.1, linewidth=1)
+    plt.axis('equal')
+    plt.xlim(-box_size,box_size)
+    plt.ylim(-box_size,box_size)
+    plt.title("n-body (COM frame), "+str(N)+" objects")
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.savefig(plotname+".png", dpi=300)
+    plt.close()
     
 def orbital_circ_velocity(mass, radius):
     """Compute circular orbital velocity for given mass and radius."""
@@ -231,21 +243,9 @@ if __name__ == "__main__":
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
     
     plotname = "plummer"+str(N)
-    def plot2d(masses, traj_com):
-        for i in range(len(masses)):
-            plt.plot(traj_com[:, i, 1], traj_com[:, i, 2], markersize=.1, linewidth=1)
-        plt.axis('equal')
-        plt.xlim(-box_size,box_size)
-        plt.ylim(-box_size,box_size)
-        plt.title("n-body (COM frame), "+str(N)+" objects")
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.savefig(plotname+".png", dpi=300)
-        plt.close()
-
     plot = "both"    
     if plot == "2d":
-        plot2d(masses, traj_com)  
+        plot2d(masses, traj_com, plotname)  
     elif plot == "3d":
         plot_3d_trajectories(traj_com, plotname, box_size, elev=35, azim=45)
     elif plot == "both":
