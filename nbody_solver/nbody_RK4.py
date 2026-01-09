@@ -183,6 +183,7 @@ def plot2d(masses, traj_com, plotname, phase_pos=None):
     plt.axis('equal')
     plt.xlim(-box_size,box_size)
     plt.ylim(-box_size,box_size)
+    plt.legend(loc='upper left')
     plt.title("n-body (COM frame), "+str(N)+" objects")
     plt.xlabel('x')
     plt.ylabel('y')
@@ -200,6 +201,7 @@ def time_to_integrate(orbits, masses, h, T, COM_frame):
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
     t1 = time.perf_counter()
     return t1 - t0
+
 
 @jit
 def binary_starting_orbits(sep: float,
@@ -266,6 +268,121 @@ def binary_starting_orbits(sep: float,
     orbit2 = jnp.concatenate([jnp.array([0.0]), r2, v2])
 
     return jnp.stack([orbit1, orbit2])
+
+
+@jit
+def _eccentric_from_true_anomaly(f, e):
+    """
+    E = 2*arctan( sqrt((1-e)/(1+e)) * tan(f/2) )
+    Handles f near ±pi robustly via atan2 formulation.
+    """
+    # Use half-angle formulation with atan2 to reduce issues with quadrants.
+    s = jnp.sqrt((1.0 - e) / (1.0 + e))
+    t_half = jnp.tan(0.5 * f)
+    E = 2.0 * jnp.arctan(s * t_half)
+    # Ensure E is continuous (map to principal branch)
+    return E
+
+@jit
+def _solve_kepler_newton(M, e, n_iter=30):
+    """
+    Solve M = E - e*sin(E) for E using Newton iterations.
+    M, e are scalars. Uses a good analytic initial guess.
+    """
+    # initial guess using Fourier series / first terms
+    E0 = M + e * jnp.sin(M) + 0.5 * (e**2) * jnp.sin(2.0 * M)
+
+    def body_fun(i, E):
+        f = E - e * jnp.sin(E) - M
+        fp = 1.0 - e * jnp.cos(E)
+        E_new = E - f / fp
+        return E_new
+
+    E_final = lax.fori_loop(0, n_iter, body_fun, E0)
+    return E_final
+
+@jit
+def binary_starting_orbits_at_phase(sep: float,
+                           e: float,
+                           inc_deg: float,
+                           m1: float,
+                           m2: float,
+                           phi: float = 0.0,
+                           true_anom_deg: float = 0.0,
+                           G: float = 1.0):
+    """
+    Construct state vectors [t, x, y, z, vx, vy, vz] for a binary at orbital phase `phi`.
+    - sep: semi-major axis a
+    - e: eccentricity (0 <= e < 1 for elliptic)
+    - inc_deg: inclination in degrees (rotation about x-axis). Positions are rotated about x.
+    - m1, m2: masses
+    - phi: orbital phase in [0,1). phi=0 corresponds to true_anom_deg at time zero.
+    - true_anom_deg: true anomaly at phase phi=0 (degrees). Default 0 -> periapsis on +x.
+    - G: gravitational constant (default 1)
+    Returns: jnp.array shape (2,7) where each row is [t, x, y, z, vx, vy, vz]
+    Notes:
+      - Positions/velocities are returned in the center-of-mass frame (COM at origin).
+      - By construction the initial reference periapsis (phi=0, true_anom_deg=0) lies on +x.
+    """
+
+    # convert angles and scalars
+    i = jnp.deg2rad(inc_deg)
+    f0 = jnp.deg2rad(true_anom_deg)
+    a = sep
+    mu = G * (m1 + m2)
+
+    # 1) compute eccentric anomaly at phi=0 from provided true anomaly f0
+    # handle circular case e==0 specially to avoid divisions by zero
+    E0 = jnp.where(e == 0.0, f0, _eccentric_from_true_anomaly(f0, e))
+
+    # 2) compute mean anomaly at phi=0
+    M0 = E0 - e * jnp.sin(E0)
+
+    # 3) advance mean anomaly by 2*pi*phi (wrap phi into [0,1))
+    phi_wrap = phi - jnp.floor(phi)
+    M_target = M0 + 2.0 * jnp.pi * phi_wrap
+
+    # 4) solve Kepler's equation for target eccentric anomaly E_target
+    E = _solve_kepler_newton(M_target, e, n_iter=40)
+
+    # 5) compute position in perifocal coordinates from E
+    cosE = jnp.cos(E)
+    sinE = jnp.sin(E)
+    sqrt_1_e2 = jnp.sqrt(jnp.maximum(0.0, 1.0 - e**2))
+
+    # Perifocal position (relative) (x_pf, y_pf, 0)
+    x_pf = a * (cosE - e)
+    y_pf = a * sqrt_1_e2 * sinE
+    r_pf = jnp.array([x_pf, y_pf, 0.0], dtype=jnp.float64)
+
+    # Perifocal velocity (relative)
+    # factor = sqrt(mu / a) / (1 - e*cosE)
+    factor = jnp.sqrt(mu / a) / (1.0 - e * cosE)
+    vx_pf = - factor * sinE
+    vy_pf =   factor * sqrt_1_e2 * cosE
+    v_pf = jnp.array([vx_pf, vy_pf, 0.0], dtype=jnp.float64)
+
+    # 6) rotate by inclination about x-axis (perifocal -> inertial, with Omega=omega=0)
+    ci = jnp.cos(i)
+    si = jnp.sin(i)
+    R_x = jnp.array([[1.0, 0.0, 0.0],
+                     [0.0, ci, -si],
+                     [0.0, si,  ci]], dtype=jnp.float64)
+
+    r_eci = R_x @ r_pf
+    v_eci = R_x @ v_pf
+
+    # 7) split into two-body COM coordinates (COM at origin)
+    r1 = - (m2 / (m1 + m2)) * r_eci
+    r2 =   (m1 / (m1 + m2)) * r_eci
+    v1 = - (m2 / (m1 + m2)) * v_eci
+    v2 =   (m1 / (m1 + m2)) * v_eci
+
+    orbit1 = jnp.concatenate([jnp.array([0.0]), r1, v1])  # [t, x, y, z, vx, vy, vz]
+    orbit2 = jnp.concatenate([jnp.array([0.0]), r2, v2])
+
+    return jnp.stack([orbit1, orbit2])
+
 
 @jit
 def kepler_period(a: float, m1: float, m2: float, G: float = 1.0):
@@ -347,7 +464,7 @@ if __name__ == "__main__":
     T = 500
 
     N=2
-    box_size=4.0
+    box_size=0.5
     mass_source = 1e-3
     low_mass = 0.1*mass_source
     high_mass =10*low_mass
@@ -369,18 +486,19 @@ if __name__ == "__main__":
     masses = jnp.array([mass_source1, mass_source2])
 
     # example
-    a = 4.0          # semi-major axis
-    e = 0.3
-    inc = 60     # degrees
-    mass_source1 = 1.0
-    mass_source2 = 1.5
+    a = 0.34        # semi-major axis
+    e = 0.8
+    inc = 30    # degrees
+    mass_source1 = 1.0e-4
+    mass_source2 = 1.5e-4
 
     Period = 2 * jnp.pi * jnp.sqrt((a**3) / (mass_source1 + mass_source2))
 
-    phase = 0.1     # x of an orbit past reference time
+    phase = 0.5  # x of an orbit past reference time
     T = Period * phase
 
-    orbits = binary_starting_orbits(a, e, inc, mass_source1, mass_source2, true_anom_deg=0.0)
+    orbits = binary_starting_orbits_at_phase(a, e, inc, mass_source1, mass_source2, 0.5, true_anom_deg=0.0)
+    # orbits = binary_starting_orbits(a, e, inc, mass_source1, mass_source2, true_anom_deg=0.0)
     print("Initial orbits:\n", orbits)
     masses = jnp.array([mass_source1, mass_source2])
     
