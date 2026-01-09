@@ -128,6 +128,7 @@ def set_axes_equal(ax):
 
 
 def plot_3d_trajectories(traj,
+                         phase_pos=None,
                          plotname: str = "default",
                          box_size: float = 2,
                          elev: float = 30.0,
@@ -153,7 +154,10 @@ def plot_3d_trajectories(traj,
             zs = data[:, i, 3]  
             ax.plot(xs, ys, zs, linewidth=1)  
             if show_initial:
-                ax.scatter(xs[0], ys[0], zs[0], s=40)  # initial point
+                ax.scatter(xs[0], ys[0], zs[0], s=40, label="Initial")  # initial point
+            if phase_pos is not None:
+                x_phase, y_phase, z_phase = phase_pos[i]
+                ax.scatter(x_phase, y_phase, z_phase, s=40, label="Phase") # phase point
         ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
         ax.set_title(subtitle)
         ax.view_init(elev=elev, azim=azim)
@@ -170,9 +174,12 @@ def plot_3d_trajectories(traj,
     ax.set_zlim3d([-size, size])
     plt.savefig(plotname+"_3d.png", dpi=300)
 
-def plot2d(masses, traj_com, plotname):
+def plot2d(masses, traj_com, plotname, phase_pos=None):
     for i in range(len(masses)):
         plt.plot(traj_com[:, i, 1], traj_com[:, i, 2], markersize=.1, linewidth=1)
+        if phase_pos is not None:
+            x_phase, y_phase, z_phase = phase_pos[i]
+            plt.scatter(x_phase, y_phase, s=40, label="Phase") # phase point
     plt.axis('equal')
     plt.xlim(-box_size,box_size)
     plt.ylim(-box_size,box_size)
@@ -193,6 +200,114 @@ def time_to_integrate(orbits, masses, h, T, COM_frame):
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
     t1 = time.perf_counter()
     return t1 - t0
+
+@jit
+def binary_starting_orbits(sep: float,
+                           e: float,
+                           inc_deg: float,
+                           m1: float,
+                           m2: float,
+                           true_anom_deg: float = 0.0,
+                           G: float = 1.0):
+    """
+    Construct initial state vectors [t, x, y, z, vx, vy, vz] for a binary system
+    - sep: semi-major axis a
+    - e: eccentricity (0 <= e < 1 for elliptic)
+    - inc_deg: inclination in degrees (rotation about x-axis). Position stays on x-axis.
+    - m1, m2: masses
+    - true_anom_deg: starting true anomaly (degrees); default = 0 -> periapsis (relative position on +x)
+    - G: gravitational constant (default 1)
+    Returns: jnp.array shape (2,7) where each row is [t, x, y, z, vx, vy, vz]
+    Notes:
+      - Positions are given in the center-of-mass frame (COM at origin).
+      - By construction initial positions have only an x-component (y=z=0).
+    """
+
+    # convert angles
+    i = jnp.deg2rad(inc_deg)
+    f = jnp.deg2rad(true_anom_deg)
+
+    # semi-major axis
+    a = sep
+
+    mu = G * (m1 + m2)
+
+    # radial distance at true anomaly f
+    r = a * (1.0 - e**2) / (1.0 + e * jnp.cos(f))
+
+    # specific angular momentum
+    h = jnp.sqrt(mu * a * (1.0 - e**2))
+
+    # velocity components in perifocal (r, theta, z=0)
+    v_r = (mu / h) * e * jnp.sin(f)
+    v_theta = (mu / h) * (1.0 + e * jnp.cos(f))
+
+    # position and velocity in perifocal coords (relative vector)
+    r_pf = jnp.array([r, 0.0, 0.0], dtype=jnp.float64)
+    v_pf = jnp.array([v_r, v_theta, 0.0], dtype=jnp.float64)
+
+    # rotation about x-axis by inclination i (perifocal -> inertial, with Omega=omega=0)
+    ci = jnp.cos(i)
+    si = jnp.sin(i)
+    R_x = jnp.array([[1.0, 0.0, 0.0],
+                     [0.0, ci, -si],
+                     [0.0, si,  ci]], dtype=jnp.float64)
+
+    r_eci = R_x @ r_pf
+    v_eci = R_x @ v_pf
+
+    # split into two-body COM coordinates (COM at origin)
+    r1 = - (m2 / (m1 + m2)) * r_eci
+    r2 =   (m1 / (m1 + m2)) * r_eci
+    v1 = - (m2 / (m1 + m2)) * v_eci
+    v2 =   (m1 / (m1 + m2)) * v_eci
+
+    orbit1 = jnp.concatenate([jnp.array([0.0]), r1, v1])  # [t, x, y, z, vx, vy, vz]
+    orbit2 = jnp.concatenate([jnp.array([0.0]), r2, v2])
+
+    return jnp.stack([orbit1, orbit2])
+
+@jit
+def kepler_period(a: float, m1: float, m2: float, G: float = 1.0):
+    return 2.0 * jnp.pi * jnp.sqrt(a**3 / (G * (m1 + m2)))
+
+# @jit
+# def positions_at_phase_kepler(traj: jnp.ndarray,
+#                               phi: float,
+#                               a: float,
+#                               m1: float,
+#                               m2: float,
+#                               G: float = 1.0):
+#     """
+#     Return positions (x,y,z) of both stars at orbital phase phi (0..1)
+#     using analytic Kepler period.
+#     """
+#     times = traj[:, 0, 0]
+#     period = kepler_period(a, m1, m2, G)
+
+#     phi = phi - jnp.floor(phi)  # wrap
+#     target_time = times[0] + phi * period
+
+#     j = jnp.searchsorted(times, target_time, side="right") - 1
+#     j = jnp.clip(j, 0, traj.shape[0] - 2)
+
+#     t0 = times[j]
+#     t1 = times[j + 1]
+#     alpha = (target_time - t0) / (t1 - t0)
+
+#     # positions
+#     pos0 = traj[j, :, 1:4]
+#     pos1 = traj[j + 1, :, 1:4]
+
+#     # velocities
+#     vel0 = traj[j, :, 4:7]
+#     vel1 = traj[j + 1, :, 4:7]
+
+#     pos_phi = (1.0 - alpha) * pos0 + alpha * pos1
+#     vel_phi = (1.0 - alpha) * vel0 + alpha * vel1
+
+#     return pos_phi, vel_phi
+
 
 if __name__ == "__main__":
     #### circular orbits in one plane (xy)
@@ -231,7 +346,7 @@ if __name__ == "__main__":
     h = 0.001
     T = 500
 
-    N=20
+    N=2
     box_size=4.0
     mass_source = 1e-3
     low_mass = 0.1*mass_source
@@ -239,15 +354,51 @@ if __name__ == "__main__":
     # orbits, masses = virialized_sphere_sampler(N, low_mass, high_mass, a=box_size/2, seed=0)
     orbits, masses = plummer_sampler(N,key=jax.random.PRNGKey(1), M1=low_mass, M2=high_mass, a=box_size/2)
     COM_frame = True
+
+    mass_source1 =  1
+    mass_source2 = mass_source1 * 1.5
+    R_forced = 3.0
+    v_circ = orbital_circ_velocity(mass_source1+mass_source2, R_forced)
+    v_circ = jnp.sqrt((mass_source1 + mass_source2) / R_forced)
+    v_1 = mass_source2 / (mass_source1 + mass_source2) * v_circ
+    v_2 = mass_source1 / (mass_source1 + mass_source2) * v_circ
+    orbit1 = jnp.array([0.0, R_forced/2, 0.0, 0.0, 0.0, -v_1, 0.0])    #this is clockwise rotation in the xy plane
+    orbit2 = jnp.array([0.0, -R_forced/2, 0.0, 0.0, 0.0, v_2, 0.0])
+    orbits = jnp.stack([orbit1, orbit2])
+    h = 0.001
+    masses = jnp.array([mass_source1, mass_source2])
+
+    # example
+    a = 4.0          # semi-major axis
+    e = 0.3
+    inc = 60     # degrees
+    mass_source1 = 1.0
+    mass_source2 = 1.5
+
+    Period = 2 * jnp.pi * jnp.sqrt((a**3) / (mass_source1 + mass_source2))
+
+    phase = 0.1     # x of an orbit past reference time
+    T = Period * phase
+
+    orbits = binary_starting_orbits(a, e, inc, mass_source1, mass_source2, true_anom_deg=0.0)
+    print("Initial orbits:\n", orbits)
+    masses = jnp.array([mass_source1, mass_source2])
     
     traj_com = integrate_nbody(orbits, masses, h, T, COM_frame)  
+
+    phase_pos, phase_vel = positions_at_phase_kepler(traj_com, phase, a, masses[0], masses[1])   # returns array (2,3)
+
+    x1, y1, z1 = phase_pos[0]
+    vx1, vy1, vz1 = phase_vel[0]
+    x2, y2, z2 = phase_pos[1]
+    vx2, vy2, vz2 = phase_vel[1]
     
-    plotname = "plummer"+str(N)
-    plot = "both"    
+    plotname = "test"   #+str(N)
+    plot = "both"     # "2d", "3d", "both"
     if plot == "2d":
         plot2d(masses, traj_com, plotname)  
     elif plot == "3d":
         plot_3d_trajectories(traj_com, plotname, box_size, elev=35, azim=45)
     elif plot == "both":
-        plot2d(masses, traj_com)  
-        plot_3d_trajectories(traj_com, plotname, box_size, elev=35, azim=45)
+        plot2d(masses, traj_com, plotname, phase_pos)  
+        plot_3d_trajectories(traj_com, phase_pos, plotname, box_size, elev=35, azim=45)
