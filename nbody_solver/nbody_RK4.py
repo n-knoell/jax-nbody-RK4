@@ -271,42 +271,42 @@ def binary_starting_orbits(sep: float,
 def kepler_period(a: float, m1: float, m2: float, G: float = 1.0):
     return 2.0 * jnp.pi * jnp.sqrt(a**3 / (G * (m1 + m2)))
 
-# @jit
-# def positions_at_phase_kepler(traj: jnp.ndarray,
-#                               phi: float,
-#                               a: float,
-#                               m1: float,
-#                               m2: float,
-#                               G: float = 1.0):
-#     """
-#     Return positions (x,y,z) of both stars at orbital phase phi (0..1)
-#     using analytic Kepler period.
-#     """
-#     times = traj[:, 0, 0]
-#     period = kepler_period(a, m1, m2, G)
+@jit
+def positions_at_phase_kepler(traj: jnp.ndarray,
+                              phi: float,
+                              a: float,
+                              m1: float,
+                              m2: float,
+                              G: float = 1.0):
+    """
+    Return positions (x,y,z) of both stars at orbital phase phi (0..1)
+    using analytic Kepler period.
+    """
+    times = traj[:, 0, 0]
+    period = kepler_period(a, m1, m2, G)
 
-#     phi = phi - jnp.floor(phi)  # wrap
-#     target_time = times[0] + phi * period
+    phi = phi - jnp.floor(phi)  # wrap
+    target_time = times[0] + phi * period
 
-#     j = jnp.searchsorted(times, target_time, side="right") - 1
-#     j = jnp.clip(j, 0, traj.shape[0] - 2)
+    j = jnp.searchsorted(times, target_time, side="right") - 1
+    j = jnp.clip(j, 0, traj.shape[0] - 2)
 
-#     t0 = times[j]
-#     t1 = times[j + 1]
-#     alpha = (target_time - t0) / (t1 - t0)
+    t0 = times[j]
+    t1 = times[j + 1]
+    alpha = (target_time - t0) / (t1 - t0)
 
-#     # positions
-#     pos0 = traj[j, :, 1:4]
-#     pos1 = traj[j + 1, :, 1:4]
+    # positions
+    pos0 = traj[j, :, 1:4]
+    pos1 = traj[j + 1, :, 1:4]
 
-#     # velocities
-#     vel0 = traj[j, :, 4:7]
-#     vel1 = traj[j + 1, :, 4:7]
+    # velocities
+    vel0 = traj[j, :, 4:7]
+    vel1 = traj[j + 1, :, 4:7]
 
-#     pos_phi = (1.0 - alpha) * pos0 + alpha * pos1
-#     vel_phi = (1.0 - alpha) * vel0 + alpha * vel1
+    pos_phi = (1.0 - alpha) * pos0 + alpha * pos1
+    vel_phi = (1.0 - alpha) * vel0 + alpha * vel1
 
-#     return pos_phi, vel_phi
+    return pos_phi, vel_phi
 
 
 if __name__ == "__main__":
